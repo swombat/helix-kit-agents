@@ -31,3 +31,18 @@ shim_port: 4000
 
 # Memory cap for the container.
 mem_limit: 8g
+
+# (Advanced — usually omitted; sensible defaults apply)
+#
+# Where on the deploy host to put the rsync'd repo.
+# Default: /var/lib/agents/<agent_id>   (requires sudo for first install)
+# Override with a user-owned path if you don't have passwordless sudo:
+# host_repo_path: /home/user/agents/wing
+#
+# Where on the deploy host the master key lives.
+# Default: /etc/helix-kit-agents/<agent_id>/master.key
+# master_key_path: /home/user/.helix-kit-agents/wing/master.key
+#
+# Where on the deploy host the LLM provider keys are sourced from.
+# Default: /etc/helix-kit-agents/<agent_id>/.host-env
+# host_env_path: /home/user/.helix-kit-agents/wing/.host-env

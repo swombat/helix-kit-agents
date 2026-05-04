@@ -101,9 +101,14 @@ def run(cmd: list, *, capture: bool = False, check: bool = True, **kw) -> subpro
 
 
 # ----- core flow -----
-def rsync_to_host(host: str, agent_id: str):
-    info(f"rsyncing repo to {host}:/var/lib/agents/{agent_id}/")
-    ssh(host, f"sudo install -d -o $USER -g $USER -m 0755 /var/lib/agents/{agent_id}")
+def rsync_to_host(host: str, agent_id: str, deploy: dict):
+    repo_dir = deploy.get("host_repo_path", f"/var/lib/agents/{agent_id}")
+    info(f"rsyncing repo to {host}:{repo_dir}/")
+    # Try sudo install (default /var/lib/agents/), fall back to mkdir -p (user-owned paths)
+    if repo_dir.startswith("/var/lib/") or repo_dir.startswith("/etc/") or repo_dir.startswith("/srv/"):
+        ssh(host, f"sudo install -d -o $USER -g $USER -m 0755 {repo_dir}")
+    else:
+        ssh(host, f"mkdir -p {repo_dir}")
     excludes = [
         ".git", ".env", ".env.tmp", "master.key", "*.tmp",
         "test-identity/", "/tmp/", "__pycache__",
@@ -113,31 +118,33 @@ def rsync_to_host(host: str, agent_id: str):
         rsync_cmd.extend(["--exclude", e])
     rsync_cmd.extend([
         f"{REPO_ROOT}/",
-        f"{host}:/var/lib/agents/{agent_id}/",
+        f"{host}:{repo_dir}/",
     ])
     run(rsync_cmd)
 
 
-def generate_env_on_host(host: str, agent_id: str):
+def generate_env_on_host(host: str, agent_id: str, deploy: dict):
     info("generating .env on host (decrypting credentials.yml.enc)")
-    repo_dir = f"/var/lib/agents/{agent_id}"
+    repo_dir = deploy.get("host_repo_path", f"/var/lib/agents/{agent_id}")
+    master_key = deploy.get("master_key_path", f"/etc/helix-kit-agents/{agent_id}/master.key")
+    host_env = deploy.get("host_env_path", f"/etc/helix-kit-agents/{agent_id}/.host-env")
     cmd = (
         f"cd {repo_dir} && "
         f"set -a; "
-        f"if [ -f /etc/helix-kit-agents/{agent_id}/.host-env ]; then "
-        f". /etc/helix-kit-agents/{agent_id}/.host-env; fi; "
+        f"if [ -f {host_env} ]; then . {host_env}; fi; "
         f"set +a; "
         f"python3 bin/generate-env "
-        f"--master-key-file /etc/helix-kit-agents/{agent_id}/master.key "
+        f"--master-key-file {master_key} "
         f"--out {repo_dir}/.env"
     )
     ssh(host, cmd)
 
 
-def docker_compose_up(host: str | None, agent_id: str):
+def docker_compose_up(host: str | None, agent_id: str, deploy: dict | None = None):
     info("docker compose up -d")
     if host:
-        ssh(host, f"cd /var/lib/agents/{agent_id} && docker compose -f docker-compose.yml.template -p agent-{agent_id} up -d --build")
+        repo_dir = (deploy or {}).get("host_repo_path", f"/var/lib/agents/{agent_id}")
+        ssh(host, f"cd {repo_dir} && docker compose -f docker-compose.yml.template -p agent-{agent_id} up -d --build")
     else:
         run(["docker", "compose", "-f", "docker-compose.yml.template", "-p", f"agent-{agent_id}", "up", "-d", "--build"], cwd=REPO_ROOT)
 
@@ -162,11 +169,15 @@ def wait_for_health(endpoint_url: str, timeout_s: int = 90) -> bool:
 
 def configure_chaos_mcp(host: str | None, agent_id: str, mcp_url: str, hx_token: str):
     """Run `chaos mcp add helixkit ...` inside the container. Idempotent — chaos
-    will refuse to add a duplicate, which is fine."""
+    refuses to add a duplicate, which is what we want.
+
+    Note: chaos's `mcp add` CLI uses `--url` for streamable HTTP servers (transport
+    is implicit from URL scheme; there's no explicit `--transport` flag at the
+    pinned chaos SHA)."""
     info("configuring chaos MCP client (idempotent)")
     add_cmd = (
         f"docker exec agent-{agent_id} chaos mcp add helixkit "
-        f"--transport http --url {mcp_url} --bearer-token {hx_token} "
+        f"--url {mcp_url} --bearer-token {hx_token} "
         f"|| true"  # ignore failure if already configured
     )
     if host:
@@ -210,13 +221,14 @@ def post_announce(mcp_url: str, agent_uuid: str, endpoint_url: str, trigger_toke
         return False
 
 
-def read_credentials_for_announce(host: str | None, agent_id: str) -> dict:
+def read_credentials_for_announce(host: str | None, agent_id: str, deploy: dict | None = None) -> dict:
     """We need agent_uuid + helix_kit.mcp_url + helix_kit.bearer_token + trigger.bearer_token
     for announce + chaos config. Read them by re-running generate-env logic locally
     (when --local) or by reading the .env on the host (when --host)."""
     if host:
-        # SSH and read /var/lib/agents/<agent_id>/.env (mode 0600 but readable by user)
-        result = ssh(host, f"cat /var/lib/agents/{agent_id}/.env", capture=True)
+        repo_dir = (deploy or {}).get("host_repo_path", f"/var/lib/agents/{agent_id}")
+        # SSH and read .env on the host (mode 0600 but readable by user)
+        result = ssh(host, f"cat {repo_dir}/.env", capture=True)
         env = parse_env(result.stdout)
     else:
         # Local: bin/generate-env should have been run already
@@ -271,15 +283,17 @@ def main():
             die("rsync not found; install it locally")
         info(f"verifying SSH to {args.host}")
         ssh(args.host, "echo ok", capture=True)
-        rsync_to_host(args.host, agent_id)
-        generate_env_on_host(args.host, agent_id)
+        rsync_to_host(args.host, agent_id, deploy)
+        generate_env_on_host(args.host, agent_id, deploy)
 
-    docker_compose_up(args.host, agent_id)
+    docker_compose_up(args.host, agent_id, deploy)
 
-    if not wait_for_health(endpoint_url):
+    if os.environ.get("HELIX_KIT_AGENTS_SKIP_HEALTH"):
+        info("skipping health poll (HELIX_KIT_AGENTS_SKIP_HEALTH set)")
+    elif not wait_for_health(endpoint_url):
         die(f"agent did not become healthy at {endpoint_url}/health within timeout")
 
-    env = read_credentials_for_announce(args.host, agent_id)
+    env = read_credentials_for_announce(args.host, agent_id, deploy)
 
     configure_chaos_mcp(
         args.host, agent_id,

@@ -10,6 +10,9 @@
 services:
   agent:
     image: helix-kit-agents:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: agent-${AGENT_ID:?set AGENT_ID in .env}
     restart: unless-stopped
 

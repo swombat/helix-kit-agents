@@ -51,9 +51,10 @@ def main():
         with tarfile.open(archive_path, "w:gz") as tf:
             tf.add(REPO_ROOT / "identity", arcname="identity")
 
+    repo_dir = deploy.get("host_repo_path", f"/var/lib/agents/{agent_id}")
     print(f"stopping agent-{agent_id}")
     if args.host:
-        ssh(args.host, f"cd /var/lib/agents/{agent_id} && docker compose -p agent-{agent_id} down")
+        ssh(args.host, f"cd {repo_dir} && docker compose -p agent-{agent_id} down")
     else:
         subprocess.run(
             ["docker", "compose", "-f", "docker-compose.yml.template",
