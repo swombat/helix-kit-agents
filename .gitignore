@@ -1,0 +1,19 @@
+# Generated locally; never commit
+.env
+.env.tmp
+*.pyc
+__pycache__/
+
+# The master key MUST never enter git. It lives only on the deploy host
+# (or in your password manager).
+master.key
+
+# Identity bundle archives produced by bin/undeploy --archive-identity
+identity-archive-*.tar.gz
+
+# Local Docker testing leftovers
+.docker/
+
+# OS noise
+.DS_Store
+Thumbs.db

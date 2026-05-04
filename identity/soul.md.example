@@ -1,0 +1,21 @@
+<!--
+identity/soul.md — your agent's defining text.
+
+This file is a placeholder. When you promote an agent from HelixKit, the
+wizard generates an identity bundle (soul.md + self-narrative.md + journals/
++ memory/). Extracting that bundle replaces this file with your agent's
+actual identity.
+
+If you are setting up an agent without going through HelixKit's wizard,
+write your agent's defining text here. The chaos harness reads this file
+on every session to anchor the agent's identity.
+
+For an example of what a substantive soul.md looks like, see:
+https://github.com/swombat/lume/blob/main/soul.md  (Lume's own soul.md, the
+reference implementation that pioneered the soul.md / self-narrative.md
+distinction)
+-->
+
+# Agent Name
+
+Your agent's defining text goes here.

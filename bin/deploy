@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+"""
+deploy — bring up this agent on a host.
+
+Two modes:
+
+  --local           Build + run on the local Docker daemon.  master.key must be
+                    present in the repo root (gitignored).  Useful for
+                    testing the full pipeline before deploying remotely.
+
+  --host HOSTNAME   SSH to HOSTNAME, rsync the repo (minus .git, master.key,
+                    .env), invoke bin/generate-env on the host (master.key
+                    must already exist there at /etc/helix-kit-agents/<id>/),
+                    docker compose up.
+
+Steps (--host mode):
+
+  1. Validate local files (deploy.yml, credentials.yml.enc, identity/soul.md)
+  2. Verify SSH connectivity to host
+  3. rsync repo to /var/lib/agents/<agent_id>/ (excluding sensitive files)
+  4. SSH into host: bin/generate-env (decrypts credentials with the host's master.key,
+     merges with /etc/helix-kit-agents/<agent_id>/.host-env LLM provider keys)
+  5. SSH into host: docker compose build (or pull if image: is set in deploy.yml)
+  6. SSH into host: docker compose up -d
+  7. Poll endpoint_url/health until 200 (timeout 90s)
+  8. Configure chaos MCP client on first deploy (idempotent — chaos mcp add)
+  9. POST to <helix_kit_mcp_url>/api/v1/agents/<agent_uuid>/announce
+ 10. Print success summary
+
+Steps (--local mode): same, but skip rsync/SSH; everything runs against the
+local Docker daemon and reads master.key from the repo root.
+"""
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from urllib.parse import urlparse, urlunparse
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def die(msg: str, exit_code: int = 1):
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(exit_code)
+
+
+def info(msg: str):
+    print(f"==> {msg}")
+
+
+# ----- validation -----
+def validate_repo() -> dict:
+    """Read deploy.yml + credentials.yml.enc; sanity-check identity/."""
+    deploy_path = REPO_ROOT / "deploy.yml"
+    creds_path = REPO_ROOT / "credentials.yml.enc"
+    soul_path = REPO_ROOT / "identity" / "soul.md"
+    soul_example = REPO_ROOT / "identity" / "soul.md.example"
+
+    if not deploy_path.exists():
+        die(f"missing {deploy_path}. Copy deploy.yml.example and edit.")
+    if not creds_path.exists():
+        die(f"missing {creds_path}. Paste the encrypted credentials from HelixKit's promote wizard.")
+
+    with deploy_path.open() as f:
+        deploy = yaml.safe_load(f) or {}
+
+    required = ["agent_id", "endpoint_url"]
+    missing = [k for k in required if not deploy.get(k)]
+    if missing:
+        die(f"deploy.yml missing required keys: {', '.join(missing)}")
+
+    if not soul_path.exists():
+        if soul_example.exists():
+            die(
+                f"identity/soul.md not found, but identity/soul.md.example is. "
+                f"You probably need to extract the identity bundle from HelixKit, "
+                f"OR (if testing) copy soul.md.example to soul.md."
+            )
+        die(f"missing {soul_path}. Bring across the agent's identity from HelixKit.")
+
+    return deploy
+
+
+# ----- ssh / shell helpers -----
+def ssh(host: str, cmd: str, *, capture: bool = False, check: bool = True) -> subprocess.CompletedProcess:
+    full = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", host, cmd]
+    return subprocess.run(full, capture_output=capture, text=True, check=check)
+
+
+def run(cmd: list, *, capture: bool = False, check: bool = True, **kw) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=capture, text=True, check=check, **kw)
+
+
+# ----- core flow -----
+def rsync_to_host(host: str, agent_id: str):
+    info(f"rsyncing repo to {host}:/var/lib/agents/{agent_id}/")
+    ssh(host, f"sudo install -d -o $USER -g $USER -m 0755 /var/lib/agents/{agent_id}")
+    excludes = [
+        ".git", ".env", ".env.tmp", "master.key", "*.tmp",
+        "test-identity/", "/tmp/", "__pycache__",
+    ]
+    rsync_cmd = ["rsync", "-az", "--delete"]
+    for e in excludes:
+        rsync_cmd.extend(["--exclude", e])
+    rsync_cmd.extend([
+        f"{REPO_ROOT}/",
+        f"{host}:/var/lib/agents/{agent_id}/",
+    ])
+    run(rsync_cmd)
+
+
+def generate_env_on_host(host: str, agent_id: str):
+    info("generating .env on host (decrypting credentials.yml.enc)")
+    repo_dir = f"/var/lib/agents/{agent_id}"
+    cmd = (
+        f"cd {repo_dir} && "
+        f"set -a; "
+        f"if [ -f /etc/helix-kit-agents/{agent_id}/.host-env ]; then "
+        f". /etc/helix-kit-agents/{agent_id}/.host-env; fi; "
+        f"set +a; "
+        f"python3 bin/generate-env "
+        f"--master-key-file /etc/helix-kit-agents/{agent_id}/master.key "
+        f"--out {repo_dir}/.env"
+    )
+    ssh(host, cmd)
+
+
+def docker_compose_up(host: str | None, agent_id: str):
+    info("docker compose up -d")
+    if host:
+        ssh(host, f"cd /var/lib/agents/{agent_id} && docker compose -f docker-compose.yml.template -p agent-{agent_id} up -d --build")
+    else:
+        run(["docker", "compose", "-f", "docker-compose.yml.template", "-p", f"agent-{agent_id}", "up", "-d", "--build"], cwd=REPO_ROOT)
+
+
+def wait_for_health(endpoint_url: str, timeout_s: int = 90) -> bool:
+    info(f"waiting for {endpoint_url}/health (timeout {timeout_s}s)")
+    deadline = time.monotonic() + timeout_s
+    last_err = None
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(f"{endpoint_url.rstrip('/')}/health", timeout=5) as r:
+                if r.status == 200:
+                    body = r.read().decode("utf-8", errors="replace")
+                    info(f"health ok: {body.strip()[:200]}")
+                    return True
+        except (URLError, HTTPError, OSError) as e:
+            last_err = e
+        time.sleep(2)
+    print(f"  last error: {last_err}", file=sys.stderr)
+    return False
+
+
+def configure_chaos_mcp(host: str | None, agent_id: str, mcp_url: str, hx_token: str):
+    """Run `chaos mcp add helixkit ...` inside the container. Idempotent — chaos
+    will refuse to add a duplicate, which is fine."""
+    info("configuring chaos MCP client (idempotent)")
+    add_cmd = (
+        f"docker exec agent-{agent_id} chaos mcp add helixkit "
+        f"--transport http --url {mcp_url} --bearer-token {hx_token} "
+        f"|| true"  # ignore failure if already configured
+    )
+    if host:
+        ssh(host, add_cmd, check=False)
+    else:
+        # Local mode — same docker exec
+        subprocess.run(add_cmd, shell=True, check=False)
+
+
+def post_announce(mcp_url: str, agent_uuid: str, endpoint_url: str, trigger_token: str) -> bool:
+    """POST to /api/v1/agents/<uuid>/announce."""
+    info(f"announcing endpoint to HelixKit ({mcp_url})")
+    # Build the announce URL — drop trailing slash, replace last segment ('mcp' or root) with /api/v1/...
+    parsed = urlparse(mcp_url)
+    # The mcp_url is something like https://helix.example.com/  — we want
+    # https://helix.example.com/api/v1/agents/<uuid>/announce
+    base = urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+    announce_url = f"{base}/api/v1/agents/{agent_uuid}/announce"
+
+    body = json.dumps({"endpoint_url": endpoint_url}).encode("utf-8")
+    req = Request(
+        announce_url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {trigger_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urlopen(req, timeout=10) as r:
+            response_body = r.read().decode("utf-8", errors="replace")
+            info(f"announce ok: {response_body.strip()[:300]}")
+            return True
+    except HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"announce failed: HTTP {e.code} {body}", file=sys.stderr)
+        return False
+    except URLError as e:
+        print(f"announce failed: {e}", file=sys.stderr)
+        return False
+
+
+def read_credentials_for_announce(host: str | None, agent_id: str) -> dict:
+    """We need agent_uuid + helix_kit.mcp_url + helix_kit.bearer_token + trigger.bearer_token
+    for announce + chaos config. Read them by re-running generate-env logic locally
+    (when --local) or by reading the .env on the host (when --host)."""
+    if host:
+        # SSH and read /var/lib/agents/<agent_id>/.env (mode 0600 but readable by user)
+        result = ssh(host, f"cat /var/lib/agents/{agent_id}/.env", capture=True)
+        env = parse_env(result.stdout)
+    else:
+        # Local: bin/generate-env should have been run already
+        env_path = REPO_ROOT / ".env"
+        if not env_path.exists():
+            # Run it ourselves
+            run(["python3", str(REPO_ROOT / "bin" / "generate-env")], check=True)
+        env = parse_env(env_path.read_text())
+    return env
+
+
+def parse_env(content: str) -> dict:
+    out = {}
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip()
+    return out
+
+
+# ----- main -----
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    parser.add_argument("--host", help="SSH hostname for remote deploy")
+    parser.add_argument("--local", action="store_true", help="run against local Docker daemon")
+    args = parser.parse_args()
+
+    if not args.host and not args.local:
+        die("specify either --host HOSTNAME or --local")
+    if args.host and args.local:
+        die("specify either --host or --local, not both")
+
+    deploy = validate_repo()
+    agent_id = deploy["agent_id"]
+    endpoint_url = deploy["endpoint_url"]
+
+    if args.local:
+        # In local mode, bin/generate-env runs locally and reads master.key from repo root
+        info("running in --local mode")
+        if not (REPO_ROOT / "master.key").exists():
+            die(
+                f"--local mode requires master.key in repo root ({REPO_ROOT}/master.key). "
+                f"This file is gitignored. For testing only — do not check it in."
+            )
+        run(["python3", str(REPO_ROOT / "bin" / "generate-env")], cwd=REPO_ROOT)
+    else:
+        # --host mode
+        if shutil.which("rsync") is None:
+            die("rsync not found; install it locally")
+        info(f"verifying SSH to {args.host}")
+        ssh(args.host, "echo ok", capture=True)
+        rsync_to_host(args.host, agent_id)
+        generate_env_on_host(args.host, agent_id)
+
+    docker_compose_up(args.host, agent_id)
+
+    if not wait_for_health(endpoint_url):
+        die(f"agent did not become healthy at {endpoint_url}/health within timeout")
+
+    env = read_credentials_for_announce(args.host, agent_id)
+
+    configure_chaos_mcp(
+        args.host, agent_id,
+        env["HELIXKIT_MCP_URL"], env["HELIXKIT_BEARER_TOKEN"],
+    )
+
+    if os.environ.get("HELIX_KIT_AGENTS_SKIP_ANNOUNCE"):
+        info("skipping announce step (HELIX_KIT_AGENTS_SKIP_ANNOUNCE set; bin/update without --reannounce)")
+    elif not post_announce(
+        env["HELIXKIT_MCP_URL"],
+        env["AGENT_UUID"],
+        endpoint_url,
+        env["TRIGGER_BEARER_TOKEN"],
+    ):
+        die("announce failed; agent is running but HelixKit doesn't know about it. Re-run bin/announce after fixing.")
+
+    print()
+    info(f"deploy complete: {agent_id} → {endpoint_url}")
+    info(f"probe with: curl {endpoint_url}/health")
+
+
+if __name__ == "__main__":
+    main()

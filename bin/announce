@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""
+announce — re-post the announce step. Idempotent.
+
+Useful when bin/deploy succeeded at compose-up but the announce HTTP call
+flapped. The agent is running; HelixKit just doesn't know its endpoint yet.
+
+Reads agent_uuid + bearer tokens + mcp_url from the local .env (or via SSH from
+the host's .env in --host mode), reads endpoint_url from deploy.yml, POSTs.
+"""
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import importlib.util
+
+deploy_spec = importlib.util.spec_from_file_location("deploy", Path(__file__).resolve().parent / "deploy")
+deploy_mod = importlib.util.module_from_spec(deploy_spec)
+deploy_spec.loader.exec_module(deploy_mod)
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    parser.add_argument("--host", help="SSH hostname (omit for --local mode)")
+    args = parser.parse_args()
+
+    deploy_yml = REPO_ROOT / "deploy.yml"
+    if not deploy_yml.exists():
+        deploy_mod.die(f"missing {deploy_yml}")
+
+    with deploy_yml.open() as f:
+        deploy = yaml.safe_load(f) or {}
+
+    agent_id = deploy.get("agent_id")
+    endpoint_url = deploy.get("endpoint_url")
+    if not agent_id or not endpoint_url:
+        deploy_mod.die("deploy.yml needs agent_id and endpoint_url")
+
+    env = deploy_mod.read_credentials_for_announce(args.host, agent_id)
+
+    ok = deploy_mod.post_announce(
+        env["HELIXKIT_MCP_URL"],
+        env["AGENT_UUID"],
+        endpoint_url,
+        env["TRIGGER_BEARER_TOKEN"],
+    )
+    sys.exit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()

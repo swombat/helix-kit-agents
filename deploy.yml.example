@@ -1,0 +1,33 @@
+# deploy.yml — copy this file to deploy.yml and fill in values for your agent.
+#
+# This file IS committed to your repo. It contains no secrets.
+
+# Human-friendly slug for this agent. Must match agent_id in credentials.yml.enc.
+agent_id: wing
+
+# The publicly-reachable URL of this agent's trigger shim.
+# In production: https://wing.your-server.example.com
+# For local Docker testing: http://localhost:4000
+endpoint_url: http://localhost:4000
+
+# Image tag to use. "latest" means rebuild from the local Dockerfile.
+# To use a registry image (e.g. you've pushed to GHCR), set this to e.g.
+#   image: ghcr.io/you/helix-kit-agents:v1.0
+# When `image:` is set, bin/deploy pulls instead of building.
+image_tag: latest
+# image: ghcr.io/you/helix-kit-agents:v1.0   # optional
+
+# LLM provider to use. Must match a key the agent has access to on the host
+# (set via host env, e.g. ANTHROPIC_API_KEY in /etc/helix-kit-agents/<agent_id>/.host-env).
+provider: anthropic
+default_model: claude-haiku-4-5
+
+# Where to bind-mount the agent's identity/ folder on the deploy host.
+# Default is sensible for most setups; only override if you have a reason.
+identity_path: /var/lib/agents/wing/identity
+
+# Port the trigger shim listens on (inside the container, mapped to the host).
+shim_port: 4000
+
+# Memory cap for the container.
+mem_limit: 8g

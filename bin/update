@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""
+update — roll the agent to a new image build.
+
+Equivalent to running bin/deploy again, but skips the announce step (the
+endpoint hasn't changed) unless --reannounce is passed.
+
+This is the right command when:
+  - You've changed the Dockerfile (e.g. bumped CHAOS_REF)
+  - You've changed trigger_shim.py
+  - You want to pick up new identity/ files and restart
+
+It rsyncs, regenerates .env (in case credentials.yml.enc changed), rebuilds
+the image, and `docker compose up -d` will replace the running container.
+"""
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+# delegate the heavy lifting to bin/deploy
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+deploy_path = Path(__file__).resolve().parent / "deploy"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    parser.add_argument("--host", help="SSH hostname")
+    parser.add_argument("--local", action="store_true")
+    parser.add_argument("--reannounce", action="store_true",
+                        help="also re-post announce to HelixKit")
+    args, extra = parser.parse_known_args()
+
+    if not args.host and not args.local:
+        print("error: specify --host or --local", file=sys.stderr)
+        sys.exit(1)
+
+    cmd = ["python3", str(deploy_path)]
+    if args.host:
+        cmd.extend(["--host", args.host])
+    if args.local:
+        cmd.append("--local")
+    cmd.extend(extra)
+
+    # The deploy script always does announce; suppress it here unless --reannounce
+    # by setting an env var the deploy script can check. (Simpler than refactoring
+    # right now — fix in v2 if it gets ugly.)
+    import os
+    env = os.environ.copy()
+    if not args.reannounce:
+        env["HELIX_KIT_AGENTS_SKIP_ANNOUNCE"] = "1"
+
+    sys.exit(subprocess.run(cmd, env=env).returncode)
+
+
+if __name__ == "__main__":
+    main()

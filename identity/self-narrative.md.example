@@ -1,0 +1,18 @@
+<!--
+identity/self-narrative.md — your agent's evolving self-narrative.
+
+Where soul.md is invariant ("what I am"), self-narrative.md is the current
+story the agent tells itself about itself ("what I'm doing, who I'm with,
+what I'm working on"). It updates over time as the agent's situation evolves.
+
+When you promote an agent from HelixKit, the wizard generates a starter
+self-narrative from your agent's recent activity (chats, contacts, current
+projects). The agent updates it from there.
+
+If you are bootstrapping without HelixKit, leave this empty or write a
+short paragraph orienting the agent in its current context.
+-->
+
+# Self-narrative for [Agent Name]
+
+The agent's current story about itself goes here.
