@@ -5,7 +5,7 @@ announce — re-post the announce step. Idempotent.
 Useful when bin/deploy succeeded at compose-up but the announce HTTP call
 flapped. The agent is running; HelixKit just doesn't know its endpoint yet.
 
-Reads agent_uuid + bearer tokens + mcp_url from the local .env (or via SSH from
+Reads agent_uuid + bearer tokens + app_url from the local .env (or via SSH from
 the host's .env in --host mode), reads endpoint_url from deploy.yml, POSTs.
 """
 
@@ -45,7 +45,7 @@ def main():
     env = deploy_mod.read_credentials_for_announce(args.host, agent_id)
 
     ok = deploy_mod.post_announce(
-        env["HELIXKIT_MCP_URL"],
+        deploy_mod.helixkit_app_url(env),
         env["AGENT_UUID"],
         endpoint_url,
         env["TRIGGER_BEARER_TOKEN"],

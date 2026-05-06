@@ -67,7 +67,8 @@ The plaintext, before encryption, is a YAML mapping like:
 agent_id: wing
 agent_uuid: 7a2c89e5-...
 helix_kit:
-  mcp_url: https://helix-kit.example.com/
+  app_url: https://helix-kit.example.com/
+  mcp_url: https://helix-kit-mcp.example.com/
   bearer_token: hx_...
 trigger:
   bearer_token: tr_...
@@ -85,6 +86,10 @@ ct_and_tag = base64.b64decode(blob["ciphertext"])
 plaintext = AESGCM(key).decrypt(nonce, ct_and_tag, None)
 creds = yaml.safe_load(plaintext)
 ```
+
+`helix_kit.app_url` is the Rails app URL used for REST calls such as announce.
+`helix_kit.mcp_url` is the standalone ActionMCP service URL used by chaos's MCP client.
+Older credentials without `app_url` still work; the deploy scripts fall back to `mcp_url` for announce and print a warning.
 
 Encryption (Ruby, what HelixKit does):
 

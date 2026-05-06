@@ -83,7 +83,7 @@ What happens:
 5. SSH: `docker compose -p agent-<agent_id> up -d --build`
 6. Poll `endpoint_url/health` until 200 (timeout 90s)
 7. Configure chaos's MCP client (`chaos mcp add helixkit ...`) on first deploy
-8. POST to HelixKit's `/api/v1/agents/<agent_uuid>/announce`
+8. POST to HelixKit's Rails app at `/api/v1/agents/<agent_uuid>/announce`
 
 ## Local mode (`--local`)
 
@@ -102,7 +102,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ./bin/deploy --local
 ```
 
-The local Docker daemon will build the image, bring up the container, the deploy script will probe `http://localhost:4000/health`, and announce to whatever HelixKit instance the credentials point at (often `http://host.docker.internal:3000/`).
+The local Docker daemon will build the image, bring up the container, the deploy script will probe `http://localhost:4000/health`, configure MCP from `helix_kit.mcp_url`, and announce to the Rails app at `helix_kit.app_url` (falling back to `mcp_url` for older credentials).
 
 **Caveat:** in `--local` mode the script reads `master.key` from the repo root because there's no host. Don't forget to `rm master.key` (or move it out of the repo) before pushing your code.
 

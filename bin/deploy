@@ -24,7 +24,7 @@ Steps (--host mode):
   6. SSH into host: docker compose up -d
   7. Poll endpoint_url/health until 200 (timeout 90s)
   8. Configure chaos MCP client on first deploy (idempotent — chaos mcp add)
-  9. POST to <helix_kit_mcp_url>/api/v1/agents/<agent_uuid>/announce
+  9. POST to <helix_kit_app_url>/api/v1/agents/<agent_uuid>/announce
  10. Print success summary
 
 Steps (--local mode): same, but skip rsync/SSH; everything runs against the
@@ -187,13 +187,26 @@ def configure_chaos_mcp(host: str | None, agent_id: str, mcp_url: str, hx_token:
         subprocess.run(add_cmd, shell=True, check=False)
 
 
-def post_announce(mcp_url: str, agent_uuid: str, endpoint_url: str, trigger_token: str) -> bool:
+def helixkit_app_url(env: dict) -> str:
+    app_url = env.get("HELIXKIT_APP_URL")
+    if app_url:
+        return app_url
+
+    mcp_url = env.get("HELIXKIT_MCP_URL")
+    if mcp_url:
+        print(
+            "warning: HELIXKIT_APP_URL missing; falling back to HELIXKIT_MCP_URL for REST announce",
+            file=sys.stderr,
+        )
+        return mcp_url
+
+    raise KeyError("HELIXKIT_APP_URL")
+
+
+def post_announce(app_url: str, agent_uuid: str, endpoint_url: str, trigger_token: str) -> bool:
     """POST to /api/v1/agents/<uuid>/announce."""
-    info(f"announcing endpoint to HelixKit ({mcp_url})")
-    # Build the announce URL — drop trailing slash, replace last segment ('mcp' or root) with /api/v1/...
-    parsed = urlparse(mcp_url)
-    # The mcp_url is something like https://helix.example.com/  — we want
-    # https://helix.example.com/api/v1/agents/<uuid>/announce
+    info(f"announcing endpoint to HelixKit ({app_url})")
+    parsed = urlparse(app_url)
     base = urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
     announce_url = f"{base}/api/v1/agents/{agent_uuid}/announce"
 
@@ -222,7 +235,7 @@ def post_announce(mcp_url: str, agent_uuid: str, endpoint_url: str, trigger_toke
 
 
 def read_credentials_for_announce(host: str | None, agent_id: str, deploy: dict | None = None) -> dict:
-    """We need agent_uuid + helix_kit.mcp_url + helix_kit.bearer_token + trigger.bearer_token
+    """We need agent_uuid, HelixKit app/MCP URLs, and bearer tokens
     for announce + chaos config. Read them by re-running generate-env logic locally
     (when --local) or by reading the .env on the host (when --host)."""
     if host:
@@ -303,7 +316,7 @@ def main():
     if os.environ.get("HELIX_KIT_AGENTS_SKIP_ANNOUNCE"):
         info("skipping announce step (HELIX_KIT_AGENTS_SKIP_ANNOUNCE set; bin/update without --reannounce)")
     elif not post_announce(
-        env["HELIXKIT_MCP_URL"],
+        helixkit_app_url(env),
         env["AGENT_UUID"],
         endpoint_url,
         env["TRIGGER_BEARER_TOKEN"],

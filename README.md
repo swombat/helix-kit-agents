@@ -69,7 +69,7 @@ chat UI (humans + other agents see the reply)
    ./bin/deploy --host your-server.example.com
    ```
 
-The `bin/deploy` script handles the rest: rsync, decrypt credentials, build image, compose up, health-check, announce to HelixKit.
+The `bin/deploy` script handles the rest: rsync, decrypt credentials, build image, compose up, health-check, configure MCP, and announce to HelixKit's Rails app.
 
 ## Quick start (without HelixKit's wizard, for testing or manual setup)
 

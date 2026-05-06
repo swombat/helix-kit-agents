@@ -12,12 +12,16 @@ Endpoints:
     GET  /health          — liveness check (no auth)
     POST /trigger         — invoke chaos with a prompt (bearer-token auth)
 
-Trigger payload:
+Trigger payload (HelixKit ChaosTriggerClient shape):
     {
-      "session_id": "claude-WYNWQe",   # arbitrary, used for chaos session resume
-      "prompt": "Reply to the last message in chat WYNWQe.",
-      "model": "claude-sonnet-4-5"     # optional; falls back to AGENT_DEFAULT_MODEL env
+      "session_id": "<agent-uuid>-<chat-id>",     # arbitrary string, future chaos session resume
+      "request": "HelixKit received a request...",# the prompt text fed to `chaos exec`
+      "conversation_id": "WYNWQe",                # optional, for logs only
+      "requested_by": "user@example.com",         # optional, for logs only
+      "model": "claude-sonnet-4-5"                # optional; falls back to AGENT_DEFAULT_MODEL env
     }
+
+`prompt` is accepted as a backwards-compatible alias for `request`.
 
 Env vars (read at startup):
     AGENT_ID                  identifier for this agent (used in logs)
@@ -71,13 +75,20 @@ def trigger():
 
     payload = request.get_json(silent=True) or {}
     session_id = payload.get("session_id")
-    prompt = payload.get("prompt")
+    # `request` is the canonical field name (HelixKit ChaosTriggerClient). `prompt`
+    # is accepted as a backwards-compatible alias for hand-rolled clients.
+    prompt = payload.get("request") or payload.get("prompt")
     model = payload.get("model", AGENT_DEFAULT_MODEL)
+    conversation_id = payload.get("conversation_id")
+    requested_by = payload.get("requested_by")
 
     if not session_id or not prompt:
-        return jsonify({"error": "session_id and prompt are required"}), 400
+        return jsonify({"error": "session_id and `request` (or `prompt`) are required"}), 400
 
-    log.info(f"trigger session_id={session_id} model={model} prompt_len={len(prompt)}")
+    log.info(
+        f"trigger session_id={session_id} conversation_id={conversation_id} "
+        f"requested_by={requested_by} model={model} prompt_len={len(prompt)}"
+    )
 
     try:
         result = subprocess.run(
