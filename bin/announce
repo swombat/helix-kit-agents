@@ -10,13 +10,20 @@ the host's .env in --host mode), reads endpoint_url from deploy.yml, POSTs.
 """
 
 import argparse
+import importlib.util
 import sys
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import importlib.util
 
-deploy_spec = importlib.util.spec_from_file_location("deploy", Path(__file__).resolve().parent / "deploy")
+# bin/deploy has no `.py` extension, so spec_from_file_location can't infer a
+# loader on its own — pass SourceFileLoader explicitly.
+_deploy_path = Path(__file__).resolve().parent / "deploy"
+deploy_spec = importlib.util.spec_from_loader(
+    "deploy",
+    SourceFileLoader("deploy", str(_deploy_path)),
+)
 deploy_mod = importlib.util.module_from_spec(deploy_spec)
 deploy_spec.loader.exec_module(deploy_mod)
 
