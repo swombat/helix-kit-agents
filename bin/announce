@@ -34,8 +34,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    parser.add_argument("--host", help="SSH hostname (omit for --local mode)")
+    parser.add_argument("--host", help="SSH hostname")
+    parser.add_argument("--local", action="store_true",
+                        help="Local mode (default when --host is omitted; accepted for symmetry with bin/deploy)")
     args = parser.parse_args()
+    if args.local and args.host:
+        parser.error("--local and --host are mutually exclusive")
 
     deploy_yml = REPO_ROOT / "deploy.yml"
     if not deploy_yml.exists():
