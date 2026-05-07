@@ -23,9 +23,8 @@ Steps (--host mode):
   5. SSH into host: docker compose build (or pull if image: is set in deploy.yml)
   6. SSH into host: docker compose up -d
   7. Poll endpoint_url/health until 200 (timeout 90s)
-  8. Configure chaos MCP client on first deploy (idempotent — chaos mcp add)
-  9. POST to <helix_kit_app_url>/api/v1/agents/<agent_uuid>/announce
- 10. Print success summary
+  8. POST to <helix_kit_app_url>/api/v1/agents/<agent_uuid>/announce
+  9. Print success summary
 
 Steps (--local mode): same, but skip rsync/SSH; everything runs against the
 local Docker daemon and reads master.key from the repo root.
@@ -167,37 +166,6 @@ def wait_for_health(endpoint_url: str, timeout_s: int = 90) -> bool:
     return False
 
 
-def configure_chaos_mcp(host: str | None, agent_id: str, mcp_url: str, hx_token: str):
-    """Run `chaos mcp add helixkit ...` inside the container, AS THE AGENT USER.
-
-    `chaos mcp add` writes to the invoking user's `~/.chaos/` registry. The
-    container's trigger_shim runs `chaos exec` as uid 1000 (the `agent` user),
-    reading from `/home/agent/.chaos/`. If we ran `chaos mcp add` as root
-    (the default `docker exec` user), it would write to `/root/.chaos/` and
-    never be visible to the agent-user's chaos process — chaos exec would
-    report `mcp startup: no servers` even though `chaos mcp list` (run as root)
-    showed the entry.
-
-    Solution: pass `--user agent` to docker exec.
-
-    Idempotent — chaos refuses to add a duplicate, which is what we want.
-
-    Note: chaos's `mcp add` CLI uses `--url` for streamable HTTP servers
-    (transport is implicit from URL scheme; there's no explicit `--transport`
-    flag at the pinned chaos SHA)."""
-    info("configuring chaos MCP client (idempotent, as agent user)")
-    add_cmd = (
-        f"docker exec --user agent agent-{agent_id} chaos mcp add helixkit "
-        f"--url {mcp_url} --bearer-token {hx_token} "
-        f"|| true"  # ignore failure if already configured
-    )
-    if host:
-        ssh(host, add_cmd, check=False)
-    else:
-        # Local mode — same docker exec
-        subprocess.run(add_cmd, shell=True, check=False)
-
-
 def helixkit_app_url(env: dict) -> str:
     app_url = env.get("HELIXKIT_APP_URL")
     if app_url:
@@ -246,8 +214,8 @@ def post_announce(app_url: str, agent_uuid: str, endpoint_url: str, trigger_toke
 
 
 def read_credentials_for_announce(host: str | None, agent_id: str, deploy: dict | None = None) -> dict:
-    """We need agent_uuid, HelixKit app/MCP URLs, and bearer tokens
-    for announce + chaos config. Read them by re-running generate-env logic locally
+    """We need agent_uuid, HelixKit app URL, and bearer tokens
+    for announce. Read them by re-running generate-env logic locally
     (when --local) or by reading the .env on the host (when --host)."""
     if host:
         repo_dir = (deploy or {}).get("host_repo_path", f"/var/lib/agents/{agent_id}")
@@ -318,11 +286,6 @@ def main():
         die(f"agent did not become healthy at {endpoint_url}/health within timeout")
 
     env = read_credentials_for_announce(args.host, agent_id, deploy)
-
-    configure_chaos_mcp(
-        args.host, agent_id,
-        env["HELIXKIT_MCP_URL"], env["HELIXKIT_BEARER_TOKEN"],
-    )
 
     if os.environ.get("HELIX_KIT_AGENTS_SKIP_ANNOUNCE"):
         info("skipping announce step (HELIX_KIT_AGENTS_SKIP_ANNOUNCE set; bin/update without --reannounce)")

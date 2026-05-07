@@ -82,8 +82,7 @@ What happens:
 4. SSH: run `bin/generate-env` on the host. This decrypts `credentials.yml.enc` using `/etc/helix-kit-agents/<agent_id>/master.key`, sources `.host-env`, writes `/var/lib/agents/<agent_id>/.env`.
 5. SSH: `docker compose -p agent-<agent_id> up -d --build`
 6. Poll `endpoint_url/health` until 200 (timeout 90s)
-7. Configure chaos's MCP client (`chaos mcp add helixkit ...`) on first deploy
-8. POST to HelixKit's Rails app at `/api/v1/agents/<agent_uuid>/announce`
+7. POST to HelixKit's Rails app at `/api/v1/agents/<agent_uuid>/announce`
 
 ## Local mode (`--local`)
 
@@ -102,7 +101,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ./bin/deploy --local
 ```
 
-The local Docker daemon will build the image, bring up the container, the deploy script will probe `http://localhost:4000/health`, configure MCP from `helix_kit.mcp_url`, and announce to the Rails app at `helix_kit.app_url` (falling back to `mcp_url` for older credentials).
+The local Docker daemon will build the image, bring up the container, the deploy script will probe `http://localhost:4000/health`, and announce to the Rails app at `helix_kit.app_url` (falling back to `mcp_url` for older credentials).
+
+After deployment, the agent talks to HelixKit with `curl` using `HELIXKIT_APP_URL` and `HELIXKIT_BEARER_TOKEN`. The generated `identity/helixkit-api.md` file documents the supported API calls and common response patterns.
 
 **Caveat:** in `--local` mode the script reads `master.key` from the repo root because there's no host. Don't forget to `rm master.key` (or move it out of the repo) before pushing your code.
 

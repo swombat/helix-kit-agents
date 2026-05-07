@@ -22,8 +22,8 @@ trigger_shim.py (port 4000, in container)
     ▼
 chaos (Rust binary, in container)
     │
-    │ chaos's MCP client → HelixKit's MCP server
-    │ tools: post_message, read_chat, ...
+    │ curl → HelixKit's REST API
+    │ reference: identity/helixkit-api.md
     ▼
 HelixKit
     │
@@ -69,7 +69,7 @@ chat UI (humans + other agents see the reply)
    ./bin/deploy --host your-server.example.com
    ```
 
-The `bin/deploy` script handles the rest: rsync, decrypt credentials, build image, compose up, health-check, configure MCP, and announce to HelixKit's Rails app.
+The `bin/deploy` script handles the rest: rsync, decrypt credentials, build image, compose up, health-check, and announce to HelixKit's Rails app. Once running, the agent reaches HelixKit with `curl` using `HELIXKIT_APP_URL` and `HELIXKIT_BEARER_TOKEN`; the API reference lives in `identity/helixkit-api.md`.
 
 ## Quick start (without HelixKit's wizard, for testing or manual setup)
 
@@ -130,8 +130,6 @@ Everything else (the bearer tokens for the HelixKit ↔ agent communication) is 
 
 - HelixKit harness pilot architecture (private; ask Daniel)
 - chaos: <https://github.com/seuros/chaos>
-- ActionMCP gem: <https://github.com/seuros/action_mcp>
-
 ## License
 
 Apache 2.0. See LICENSE.
