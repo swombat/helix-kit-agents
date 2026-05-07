@@ -168,15 +168,26 @@ def wait_for_health(endpoint_url: str, timeout_s: int = 90) -> bool:
 
 
 def configure_chaos_mcp(host: str | None, agent_id: str, mcp_url: str, hx_token: str):
-    """Run `chaos mcp add helixkit ...` inside the container. Idempotent — chaos
-    refuses to add a duplicate, which is what we want.
+    """Run `chaos mcp add helixkit ...` inside the container, AS THE AGENT USER.
 
-    Note: chaos's `mcp add` CLI uses `--url` for streamable HTTP servers (transport
-    is implicit from URL scheme; there's no explicit `--transport` flag at the
-    pinned chaos SHA)."""
-    info("configuring chaos MCP client (idempotent)")
+    `chaos mcp add` writes to the invoking user's `~/.chaos/` registry. The
+    container's trigger_shim runs `chaos exec` as uid 1000 (the `agent` user),
+    reading from `/home/agent/.chaos/`. If we ran `chaos mcp add` as root
+    (the default `docker exec` user), it would write to `/root/.chaos/` and
+    never be visible to the agent-user's chaos process — chaos exec would
+    report `mcp startup: no servers` even though `chaos mcp list` (run as root)
+    showed the entry.
+
+    Solution: pass `--user agent` to docker exec.
+
+    Idempotent — chaos refuses to add a duplicate, which is what we want.
+
+    Note: chaos's `mcp add` CLI uses `--url` for streamable HTTP servers
+    (transport is implicit from URL scheme; there's no explicit `--transport`
+    flag at the pinned chaos SHA)."""
+    info("configuring chaos MCP client (idempotent, as agent user)")
     add_cmd = (
-        f"docker exec agent-{agent_id} chaos mcp add helixkit "
+        f"docker exec --user agent agent-{agent_id} chaos mcp add helixkit "
         f"--url {mcp_url} --bearer-token {hx_token} "
         f"|| true"  # ignore failure if already configured
     )
