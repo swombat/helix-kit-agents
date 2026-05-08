@@ -5,7 +5,7 @@ deploy — bring up this agent on a host.
 Two modes:
 
   --local           Build + run on the local Docker daemon.  master.key must be
-                    present in the repo root (gitignored).  Useful for
+                    present in the repo root (gitignored). Useful for
                     testing the full pipeline before deploying remotely.
 
   --host HOSTNAME   SSH to HOSTNAME, rsync the repo (minus .git, master.key,
@@ -109,7 +109,7 @@ def rsync_to_host(host: str, agent_id: str, deploy: dict):
     else:
         ssh(host, f"mkdir -p {repo_dir}")
     excludes = [
-        ".git", ".env", ".env.tmp", "master.key", "*.tmp",
+        ".env", ".env.tmp", ".agent-deploy-key", "master.key", "*.tmp",
         "test-identity/", "/tmp/", "__pycache__",
     ]
     rsync_cmd = ["rsync", "-az", "--delete"]
@@ -170,14 +170,6 @@ def helixkit_app_url(env: dict) -> str:
     app_url = env.get("HELIXKIT_APP_URL")
     if app_url:
         return app_url
-
-    mcp_url = env.get("HELIXKIT_MCP_URL")
-    if mcp_url:
-        print(
-            "warning: HELIXKIT_APP_URL missing; falling back to HELIXKIT_MCP_URL for REST announce",
-            file=sys.stderr,
-        )
-        return mcp_url
 
     raise KeyError("HELIXKIT_APP_URL")
 

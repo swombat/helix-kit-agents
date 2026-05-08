@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # workspace on master has no version tags and no published binary releases.
 # We pin to a SHA on master. Update CHAOS_REF when bumping to a newer tip.
 #
-# Last bumped: 2026-05-04 — d3bb3e9 "Use per-server runtime DB ops for MCP registry"
+# Last bumped: 2026-05-04.
 ARG CHAOS_REPO=https://github.com/seuros/chaos.git
 ARG CHAOS_REF=d3bb3e9418cef11c64b83326f8bb9559daf9ec2b
 
@@ -65,6 +65,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-cryptography \
         python3-yaml \
         git \
+        openssh-client \
         curl \
         tini \
         gosu \
@@ -90,9 +91,9 @@ COPY --chown=agent:agent trigger_shim.py /home/agent/trigger_shim.py
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
-# Identity volume — bind-mounted at runtime from the deploy host.
-# Contains soul.md, self-narrative.md, journals/, memory/.
-VOLUME ["/home/agent/identity"]
+# Repo volume — bind-mounted at runtime from the deploy host.
+# Contains the agent's git working tree, including identity/.
+VOLUME ["/home/agent/repo"]
 
 # chaos session/config volume — bind-mounted from a docker-managed volume on
 # the host (chaos-home). Persists across container restarts.

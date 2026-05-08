@@ -27,7 +27,8 @@ services:
       # Auth tokens — from credentials.yml.enc, decrypted at deploy time
       TRIGGER_BEARER_TOKEN: ${TRIGGER_BEARER_TOKEN:?set TRIGGER_BEARER_TOKEN}
       HELIXKIT_BEARER_TOKEN: ${HELIXKIT_BEARER_TOKEN:?set HELIXKIT_BEARER_TOKEN}
-      HELIXKIT_MCP_URL: ${HELIXKIT_MCP_URL:?set HELIXKIT_MCP_URL}
+      HELIXKIT_APP_URL: ${HELIXKIT_APP_URL:?set HELIXKIT_APP_URL}
+      GIT_SSH_COMMAND: ssh -i /run/agent-deploy-key -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null
 
       # User-supplied LLM provider key — from host env, never enters the repo
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -39,9 +40,12 @@ services:
       # Persist chaos session/config across restarts (agent's home dir for chaos data)
       - chaos-home:/home/agent/.chaos
 
-      # Identity volume — bind-mounted from the deploy host. The path on the
-      # host is /var/lib/agents/<AGENT_ID>/identity, set up by bin/deploy.
-      - ${IDENTITY_PATH:?set IDENTITY_PATH}:/home/agent/identity:ro
+      # Agent repo working tree — bind-mounted from the deploy host. Contains
+      # identity/ and .git so the agent can commit and push identity changes.
+      - ${REPO_PATH:?set REPO_PATH}:/home/agent/repo
+
+      # Deploy key — decrypted from credentials.yml.enc by bin/generate-env.
+      - ${AGENT_DEPLOY_KEY_PATH:-/dev/null}:/run/agent-deploy-key:ro
 
     extra_hosts:
       # On Linux, ensures host.docker.internal resolves (useful for local dev

@@ -49,10 +49,9 @@ Multiple keys are supported — set whichever ones you need. The agent uses the 
 
 ### 3. deploy.yml
 
-In your local clone:
+The HelixKit promotion wizard commits a prefilled `deploy.yml` into the per-agent repo. In your local clone, review it:
 
 ```bash
-cp deploy.yml.example deploy.yml
 vim deploy.yml
 ```
 
@@ -78,11 +77,12 @@ What happens:
 
 1. Local validation (deploy.yml, credentials.yml.enc, identity/soul.md exist)
 2. SSH connectivity test
-3. rsync your repo to `/var/lib/agents/<agent_id>/` on the host (excludes `.git`, `master.key`, `.env`)
+3. rsync your repo to `/var/lib/agents/<agent_id>/` on the host (keeps `.git`, excludes local secrets such as `master.key`, `.env`, and `.agent-deploy-key`)
 4. SSH: run `bin/generate-env` on the host. This decrypts `credentials.yml.enc` using `/etc/helix-kit-agents/<agent_id>/master.key`, sources `.host-env`, writes `/var/lib/agents/<agent_id>/.env`.
-5. SSH: `docker compose -p agent-<agent_id> up -d --build`
-6. Poll `endpoint_url/health` until 200 (timeout 90s)
-7. POST to HelixKit's Rails app at `/api/v1/agents/<agent_uuid>/announce`
+5. `bin/generate-env` writes the GitHub deploy key from credentials to `.agent-deploy-key`.
+6. SSH: `docker compose -p agent-<agent_id> up -d --build`
+7. Poll `endpoint_url/health` until 200 (timeout 90s)
+8. POST to HelixKit's Rails app at `/api/v1/agents/<agent_uuid>/announce`
 
 ## Local mode (`--local`)
 
@@ -101,7 +101,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ./bin/deploy --local
 ```
 
-The local Docker daemon will build the image, bring up the container, the deploy script will probe `http://localhost:4000/health`, and announce to the Rails app at `helix_kit.app_url` (falling back to `mcp_url` for older credentials).
+The local Docker daemon will build the image, bring up the container, the deploy script will probe `http://localhost:4000/health`, and announce to the Rails app at `helix_kit.app_url`.
+The repo is mounted read/write into the container, and `/home/agent/identity` points at the repo's `identity/` directory so the agent can update and commit its own identity.
 
 After deployment, the agent talks to HelixKit with `curl` using `HELIXKIT_APP_URL` and `HELIXKIT_BEARER_TOKEN`. The generated `identity/helixkit-api.md` file documents the supported API calls and common response patterns.
 

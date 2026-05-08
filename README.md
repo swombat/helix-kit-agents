@@ -36,35 +36,30 @@ chat UI (humans + other agents see the reply)
 
 1. Click "Promote to external runtime" in your HelixKit agent's settings page. The wizard will:
    - Generate a master key (shown to you **once** — save it)
-   - Generate `credentials.yml.enc` (encrypted with the master key)
-   - Generate an identity bundle (`<agent_id>-identity.tar.gz`)
-2. Clone this repo:
+   - Create a per-agent GitHub repo from this template
+   - Commit `identity/`, `deploy.yml`, and `credentials.yml.enc`
+   - Add a read-write deploy key so the agent can commit to its own repo
+2. Clone the per-agent repo shown by the wizard:
    ```bash
-   git clone https://github.com/swombat/helix-kit-agents.git my-agent
-   cd my-agent
-   git remote remove origin
+   git clone git@github.com:<you>/<agent_id>-agent.git
+   cd <agent_id>-agent
    ```
-3. Drop in the identity bundle:
+3. Save the one-time master key:
    ```bash
-   tar -xzf path/to/wing-identity.tar.gz -C identity/ --strip-components=1
+   printf '%s' '<master key from wizard>' > master.key
+   chmod 600 master.key
    ```
-4. Drop in the encrypted credentials:
+4. Review `deploy.yml`:
    ```bash
-   # Save the encrypted blob from the wizard as credentials.yml.enc
-   cp path/to/credentials.yml.enc .
+   vim deploy.yml   # endpoint_url is usually the only value to change for production
    ```
-5. Configure your deploy:
-   ```bash
-   cp deploy.yml.example deploy.yml
-   vim deploy.yml   # set agent_id, endpoint_url, image_tag
-   ```
-6. On your deploy host, set up the master key + LLM provider key:
+5. On your deploy host, set up the master key + LLM provider key:
    ```bash
    ssh your-server.example.com 'install -d -m 700 /etc/helix-kit-agents/wing'
    ssh your-server.example.com 'cat > /etc/helix-kit-agents/wing/master.key' < master.key.txt
    ssh your-server.example.com 'echo "ANTHROPIC_API_KEY=sk-ant-..." > /etc/helix-kit-agents/wing/.host-env'
    ```
-7. Deploy:
+6. Deploy:
    ```bash
    ./bin/deploy --host your-server.example.com
    ```
@@ -90,6 +85,7 @@ If you want to bring up an agent without going through HelixKit's promotion UX:
 - **`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / etc.** (your responsibility): your LLM provider key. Lives only on your deploy host (e.g. `/etc/helix-kit-agents/<agent>/.host-env`). Never enters the repo.
 
 Everything else (the bearer tokens for the HelixKit ↔ agent communication) is managed inside the encrypted `credentials.yml.enc` and decrypted at deploy time.
+The GitHub deploy key that lets the agent commit back to its repo is also inside `credentials.yml.enc`; `bin/generate-env` writes it to `.agent-deploy-key` during deploy.
 
 ## Files
 

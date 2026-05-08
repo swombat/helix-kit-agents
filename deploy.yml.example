@@ -22,9 +22,10 @@ image_tag: latest
 provider: anthropic
 default_model: claude-haiku-4-5
 
-# Where to bind-mount the agent's identity/ folder on the deploy host.
-# Default is sensible for most setups; only override if you have a reason.
-identity_path: /var/lib/agents/wing/identity
+# Where to bind-mount the agent's git working tree on the deploy host.
+# Default is the repo root for local deploys, or host_repo_path for host deploys.
+# Only override if you have a reason.
+# repo_path: /var/lib/agents/wing
 
 # Port the trigger shim listens on (inside the container, mapped to the host).
 shim_port: 4000
