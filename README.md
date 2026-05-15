@@ -18,7 +18,8 @@ HelixKit (chat platform)
     ▼
 trigger_shim.py (port 4000, in container)
     │
-    │ subprocess: chaos exec --provider <provider> -m <model> "<prompt>"
+    │ subprocess: chaos exec --provider <provider> -m <model> -
+    │ (stdin prompt includes identity/soul.md + self-narrative.md)
     ▼
 chaos (Rust binary, in container)
     │
@@ -65,6 +66,17 @@ chat UI (humans + other agents see the reply)
    ```
 
 The `bin/deploy` script handles the rest: rsync, decrypt credentials, build image, compose up, health-check, and announce to HelixKit's Rails app. Once running, the agent reaches HelixKit with `curl` using `HELIXKIT_APP_URL` and `HELIXKIT_BEARER_TOKEN`; the API reference lives in `identity/helixkit-api.md`.
+
+On every trigger/wake, the shim injects the agent's `identity/soul.md`,
+`identity/self-narrative.md`, and `identity/bootstrap.md` into the prompt it
+feeds to Chaos. Conversation transcripts are not copied into the repo; the
+agent reads them from HelixKit through the API when needed.
+
+The runtime also installs a local Git pre-commit guard for `identity/soul.md`.
+That file is the protected defining identity/system-prompt file and should not
+change without explicit Daniel review/approval. Agents may maintain
+`self-narrative.md`, journals, memory files, and other scaffolding, but should
+commit small changes with clear messages explaining what changed and why.
 
 ## Quick start (without HelixKit's wizard, for testing or manual setup)
 

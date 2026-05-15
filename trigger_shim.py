@@ -28,6 +28,8 @@ Env vars (read at startup):
     TRIGGER_BEARER_TOKEN      required; the bearer token HelixKit must send on /trigger
     AGENT_DEFAULT_MODEL       default model name (e.g. "claude-haiku-4-5")
     AGENT_PROVIDER            chaos provider override (e.g. "anthropic")
+    AGENT_REPO_PATH           agent repo path (default /home/agent/repo)
+    AGENT_IDENTITY_PATH       identity path (default /home/agent/identity)
     SHIM_PORT                 port to listen on (default 4000)
     CHAOS_BIN                 path to chaos binary (default /usr/local/bin/chaos)
     CHAOS_TIMEOUT_SECS        max seconds for a single chaos exec call (default 600)
@@ -36,6 +38,7 @@ Env vars (read at startup):
 import os
 import subprocess
 import logging
+from pathlib import Path
 from flask import Flask, request, jsonify, abort
 
 # ----- config -----
@@ -43,9 +46,12 @@ AGENT_ID = os.environ.get("AGENT_ID", "unknown")
 TRIGGER_BEARER_TOKEN = os.environ.get("TRIGGER_BEARER_TOKEN", "")
 AGENT_DEFAULT_MODEL = os.environ.get("AGENT_DEFAULT_MODEL", "claude-haiku-4-5")
 AGENT_PROVIDER = os.environ.get("AGENT_PROVIDER", "anthropic")
+AGENT_REPO_PATH = Path(os.environ.get("AGENT_REPO_PATH", "/home/agent/repo"))
+AGENT_IDENTITY_PATH = Path(os.environ.get("AGENT_IDENTITY_PATH", "/home/agent/identity"))
 SHIM_PORT = int(os.environ.get("SHIM_PORT", "4000"))
 CHAOS_BIN = os.environ.get("CHAOS_BIN", "/usr/local/bin/chaos")
 CHAOS_TIMEOUT_SECS = int(os.environ.get("CHAOS_TIMEOUT_SECS", "600"))
+IDENTITY_FILE_LIMIT = 80_000
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,11 +96,15 @@ def trigger():
         f"requested_by={requested_by} model={model} prompt_len={len(prompt)}"
     )
 
+    full_prompt = build_prompt(prompt)
+    cwd = AGENT_REPO_PATH if AGENT_REPO_PATH.exists() else Path.home()
+
     try:
         result = subprocess.run(
             [
                 CHAOS_BIN, "exec",
                 "--provider", AGENT_PROVIDER,
+                "-C", str(cwd),
                 "--skip-git-repo-check",
                 "-m", model,
                 # NOTE: --resume <session_id> only works for an existing session.
@@ -104,8 +114,11 @@ def trigger():
                 # returned session_id from chaos's stdout if needed.
                 # TODO: implement session-id persistence properly once we know the
                 # chaos session-id format from real runs.
-                prompt,
+                # Read the full prompt from stdin so identity injection is not
+                # constrained by shell argv limits and is not exposed in ps args.
+                "-",
             ],
+            input=full_prompt,
             capture_output=True,
             text=True,
             timeout=CHAOS_TIMEOUT_SECS,
@@ -133,6 +146,70 @@ def _tail(s: str, n: int) -> str:
     if len(s) <= n:
         return s
     return f"...[truncated {len(s) - n} chars]...\n{s[-n:]}"
+
+
+def build_prompt(request_text: str) -> str:
+    """Attach the agent's identity bundle to every Chaos turn."""
+    return "\n\n".join(part for part in [identity_context(), request_text] if part)
+
+
+def identity_context() -> str:
+    """Return the identity context exported by HelixKit.
+
+    These files are the external runtime equivalent of the agent's HelixKit
+    system prompt and self-story. They must be present in the model context on
+    every wake/trigger, not merely mounted on disk.
+    """
+    sections = [
+        "# External Agent Identity Context",
+        (
+            "The following files define who you are in this external runtime. "
+            "`identity/soul.md` is your defining system prompt exported from "
+            "HelixKit. `identity/self-narrative.md` is living memory and may "
+            "evolve carefully. Treat `identity/soul.md` as protected: do not "
+            "change it without explicit Daniel review/approval."
+        ),
+    ]
+
+    for filename, label in [
+        ("soul.md", "Defining system prompt"),
+        ("self-narrative.md", "Self-narrative"),
+        ("bootstrap.md", "Bootstrap notes"),
+    ]:
+        content = read_identity_file(filename)
+        if content:
+            sections.append(f"## {label}: identity/{filename}\n\n{content}")
+
+    sections.append(
+        "## HelixKit access\n\n"
+        "Use `identity/helixkit-api.md` for the REST API manual. Conversation "
+        "transcripts remain in HelixKit; read them through the API when a wake "
+        "or trigger asks you to consider a conversation. Your exported memory "
+        "files, if any, live under `identity/memory/`."
+    )
+
+    sections.append(
+        "## Repository stewardship\n\n"
+        "If you improve your own repository or identity files, prefer small, "
+        "reviewable commits. Commit with a clear message explaining what you "
+        "changed and why so Daniel can review the GitHub history."
+    )
+
+    return "\n\n".join(sections)
+
+
+def read_identity_file(filename: str) -> str:
+    path = AGENT_IDENTITY_PATH / filename
+    try:
+        content = path.read_text()
+    except FileNotFoundError:
+        return ""
+    except Exception as e:
+        return f"_Could not read {path}: {e}_"
+
+    if len(content) <= IDENTITY_FILE_LIMIT:
+        return content
+    return content[:IDENTITY_FILE_LIMIT] + f"\n\n_[truncated {len(content) - IDENTITY_FILE_LIMIT} chars]_"
 
 
 def _chaos_version() -> str:

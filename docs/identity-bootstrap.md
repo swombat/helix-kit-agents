@@ -31,7 +31,10 @@ You're authoring the agent from scratch. Edit:
 - `identity/self-narrative.md` — the current story the agent tells itself about itself. Their history, current projects, who they're with.
 - `identity/journals/` and `identity/memory/` — start empty. The agent fills these as it lives.
 
-The chaos harness reads the soul.md / self-narrative.md on every session via the agent's system prompt. How exactly chaos surfaces them depends on your chaos config; see chaos's documentation.
+The trigger shim injects `soul.md`, `self-narrative.md`, and `bootstrap.md` into
+every `chaos exec` prompt. Conversation transcripts are not exported; when the
+agent needs conversational context, it reads HelixKit through
+`identity/helixkit-api.md`.
 
 ## What the agent owns
 
@@ -42,6 +45,9 @@ After deployment, `identity/` belongs to the agent. The agent (via chaos's tool 
 - Build memory in `memory/`
 
 `soul.md` is conventionally invariant — the agent doesn't update it without a deliberate human-in-the-loop process. This is how the soul.md / self-narrative.md split is supposed to work: the soul is what stays the same, the narrative is what evolves.
+The runtime installs a local Git pre-commit guard that refuses staged changes to
+`identity/soul.md` unless `ALLOW_PROTECTED_IDENTITY_CHANGE=1` is set for an
+explicitly reviewed commit.
 
 ## Updates from outside
 

@@ -47,5 +47,36 @@ register_provider_key() {
 register_provider_key anthropic "$ANTHROPIC_API_KEY"
 register_provider_key openai "$OPENAI_API_KEY"
 
+# Install a local guardrail in the bind-mounted repo. The agent may maintain
+# self-narrative and memory, but the defining soul prompt should not change by
+# accident or without Daniel's explicit review. This is intentionally a local
+# Git hook rather than a repo file: generated per-agent repos inherit it at
+# runtime even if GitHub template hooks are not copied.
+if [ -d "$AGENT_HOME/repo/.git/hooks" ]; then
+    cat > "$AGENT_HOME/repo/.git/hooks/pre-commit" <<'HOOK'
+#!/bin/sh
+set -e
+
+if [ "${ALLOW_PROTECTED_IDENTITY_CHANGE:-}" = "1" ]; then
+    exit 0
+fi
+
+protected='identity/soul.md'
+if git diff --cached --name-only -- "$protected" | grep -qx "$protected"; then
+    cat >&2 <<'MSG'
+Refusing to commit identity/soul.md.
+
+That file is the agent's defining system prompt and is protected. If Daniel has
+explicitly reviewed and approved this change, rerun the commit with:
+
+  ALLOW_PROTECTED_IDENTITY_CHANGE=1 git commit ...
+MSG
+    exit 1
+fi
+HOOK
+    chmod 0755 "$AGENT_HOME/repo/.git/hooks/pre-commit" || true
+    chown 1000:1000 "$AGENT_HOME/repo/.git/hooks/pre-commit" || true
+fi
+
 # Drop to the `agent` user and exec the shim.
 exec gosu agent "$@"
