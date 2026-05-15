@@ -1,6 +1,7 @@
 # Generated locally; never commit
 .env
 .env.tmp
+.agent-deploy-key
 *.pyc
 __pycache__/
 

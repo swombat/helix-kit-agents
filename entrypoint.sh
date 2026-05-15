@@ -31,5 +31,21 @@ if [ -d "$AGENT_HOME/repo" ]; then
     fi
 fi
 
+# Some chaos providers read API keys directly from the environment (Anthropic),
+# while others require a provider account entry under the agent user's
+# ~/.chaos (OpenAI at the pinned chaos revision). Seed those account entries
+# opportunistically from host-supplied env vars on every boot. This writes into
+# the persisted chaos-home volume and is idempotent; never echo the key.
+register_provider_key() {
+    provider="$1"
+    key="$2"
+    if [ -n "$key" ]; then
+        printf '%s' "$key" | gosu agent chaos accounts --provider "$provider" --with-api-key >/dev/null 2>&1 || true
+    fi
+}
+
+register_provider_key anthropic "$ANTHROPIC_API_KEY"
+register_provider_key openai "$OPENAI_API_KEY"
+
 # Drop to the `agent` user and exec the shim.
 exec gosu agent "$@"

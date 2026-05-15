@@ -168,7 +168,7 @@ def compose_env(creds: dict, deploy: dict, out_path: Path) -> str:
         f"AGENT_ID={agent_id}",
         f"AGENT_UUID={creds.get('agent_uuid', '')}",
         f"AGENT_PROVIDER={deploy.get('provider', 'anthropic')}",
-        f"AGENT_DEFAULT_MODEL={deploy.get('default_model', 'claude-haiku-4-5')}",
+        f"AGENT_DEFAULT_MODEL={deploy.get('default_model') or deploy.get('model') or 'claude-haiku-4-5'}",
         f"HELIXKIT_APP_URL={app_url}",
         f"HELIXKIT_BEARER_TOKEN={helix_kit.get('bearer_token', '')}",
         f"TRIGGER_BEARER_TOKEN={trigger.get('bearer_token', '')}",
