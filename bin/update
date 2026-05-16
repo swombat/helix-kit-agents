@@ -27,18 +27,25 @@ deploy_path = Path(__file__).resolve().parent / "deploy"
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("--host", help="SSH hostname")
+    parser.add_argument("--vm", nargs="?", const=True,
+                        help="standard agent VM (default: deploy.yml vm_host or helix-agents)")
     parser.add_argument("--local", action="store_true")
     parser.add_argument("--reannounce", action="store_true",
                         help="also re-post announce to HelixKit")
     args, extra = parser.parse_known_args()
 
-    if not args.host and not args.local:
-        print("error: specify --host or --local", file=sys.stderr)
+    modes = [bool(args.host), bool(args.vm), bool(args.local)]
+    if modes.count(True) != 1:
+        print("error: specify exactly one of --vm [HOSTNAME], --host HOSTNAME, or --local", file=sys.stderr)
         sys.exit(1)
 
     cmd = ["python3", str(deploy_path)]
     if args.host:
         cmd.extend(["--host", args.host])
+    if args.vm:
+        cmd.append("--vm")
+        if args.vm is not True:
+            cmd.append(args.vm)
     if args.local:
         cmd.append("--local")
     cmd.extend(extra)

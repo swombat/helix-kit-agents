@@ -54,18 +54,12 @@ chat UI (humans + other agents see the reply)
    ```bash
    vim deploy.yml   # endpoint_url is usually the only value to change for production
    ```
-5. On your deploy host, set up the master key + LLM provider key:
-   ```bash
-   ssh your-server.example.com 'install -d -m 700 /etc/helix-kit-agents/wing'
-   ssh your-server.example.com 'cat > /etc/helix-kit-agents/wing/master.key' < master.key.txt
-   ssh your-server.example.com 'echo "ANTHROPIC_API_KEY=sk-ant-..." > /etc/helix-kit-agents/wing/.host-env'
-   ```
-6. Deploy:
-   ```bash
-   ./bin/deploy --host your-server.example.com
-   ```
+5. Deploy to the standard agent VM:
+    ```bash
+    ./bin/deploy --vm
+    ```
 
-The `bin/deploy` script handles the rest: rsync, decrypt credentials, build image, compose up, health-check, and announce to HelixKit's Rails app. Once running, the agent reaches HelixKit with `curl` using `HELIXKIT_APP_URL` and `HELIXKIT_BEARER_TOKEN`; the API reference lives in `identity/helixkit-api.md`.
+The `bin/deploy` script handles the rest: uploads the master key to the agent VM, rsyncs, decrypts credentials, builds the image, composes up, health-checks, and announces to HelixKit's Rails app. Once running, the agent reaches HelixKit with `curl` using `HELIXKIT_APP_URL` and `HELIXKIT_BEARER_TOKEN`; the API reference lives in `identity/helixkit-api.md`.
 
 On every trigger/wake, the shim injects the agent's `identity/soul.md`,
 `identity/self-narrative.md`, and `identity/bootstrap.md` into the prompt it
@@ -93,8 +87,8 @@ If you want to bring up an agent without going through HelixKit's promotion UX:
 
 ## The two secrets you handle
 
-- **`master.key`** (your responsibility): the 32-byte key that decrypts `credentials.yml.enc`. Lives only on your deploy host (or in your password manager). Gitignored.
-- **`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / etc.** (your responsibility): your LLM provider key. Lives only on your deploy host (e.g. `/etc/helix-kit-agents/<agent>/.host-env`). Never enters the repo.
+- **`master.key`** (your responsibility): the 32-byte key that decrypts `credentials.yml.enc`. Keep it in your password manager; `bin/deploy --vm` uploads it to the agent VM. Gitignored.
+- **LLM provider keys**: normally copied by HelixKit from its own configured provider keys into `credentials.yml.enc`, so you do not set these per agent. Host env remains an advanced override for unusual/manual deployments.
 
 Everything else (the bearer tokens for the HelixKit ↔ agent communication) is managed inside the encrypted `credentials.yml.enc` and decrypted at deploy time.
 The GitHub deploy key that lets the agent commit back to its repo is also inside `credentials.yml.enc`; `bin/generate-env` writes it to `.agent-deploy-key` during deploy.
@@ -117,7 +111,8 @@ The GitHub deploy key that lets the agent commit back to its repo is also inside
 
 | Script | What it does |
 |---|---|
-| `bin/deploy --host HOSTNAME` | full deploy: rsync, generate-env on host, build, compose up, health, announce |
+| `bin/deploy --vm [HOSTNAME]` | standard deploy: upload master key, rsync, generate-env on VM, build, compose up, health, announce |
+| `bin/deploy --host HOSTNAME` | advanced/manual deploy: assumes master key/provider env are already present on host |
 | `bin/deploy --local` | same but against the local Docker daemon |
 | `bin/generate-env` | decrypt credentials, compose `.env` from credentials + host LLM keys |
 | `bin/announce --host HOSTNAME` | re-post announce only (idempotent) |
@@ -128,7 +123,7 @@ The GitHub deploy key that lets the agent commit back to its repo is also inside
 
 **"libdbus-1.so.3: cannot open shared object file"** — the runtime image is missing libdbus. Already baked into the Dockerfile; if you've customised it, ensure `libdbus-1-3` is installed in the runtime stage.
 
-**"chaos accounts --with-api-key" reports success but exec can't find the key** — set the API key as an env var directly (e.g. `ANTHROPIC_API_KEY=...` in `.host-env`) rather than relying on chaos's stored connection. The Docker volume permissions can be flaky.
+**"chaos accounts --with-api-key" reports success but exec can't find the key** — provider keys should be present in the generated `.env` from encrypted credentials. Check `credentials.yml.enc` was regenerated after HelixKit had provider keys configured.
 
 **Announce returns 401** — the trigger bearer token in your decrypted credentials doesn't match what HelixKit has on file. Rotate via the HelixKit UI (agent settings → rotate trigger token) and re-deploy.
 
@@ -144,4 +139,4 @@ Apache 2.0. See LICENSE.
 
 ## Status
 
-v1, in active development. The local-Docker path has been smoke-tested. The remote `--host` path has been written but not yet exercised against a production VPS — see `docs/deploy.md` for caveats.
+v1, in active development. The standard path is `bin/deploy --vm`; `--host` and `--local` remain for advanced/manual testing.

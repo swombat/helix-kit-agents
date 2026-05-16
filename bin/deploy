@@ -13,6 +13,11 @@ Two modes:
                     must already exist there at /etc/helix-kit-agents/<id>/),
                     docker compose up.
 
+  --vm HOSTNAME     Convenience mode for the standard HelixKit agent VM. Reads
+                    master.key from the repo root, uploads it to HOSTNAME, then
+                    performs --host HOSTNAME. No separate .host-env is needed
+                    when HelixKit encrypted provider keys into credentials.yml.enc.
+
 Steps (--host mode):
 
   1. Validate local files (deploy.yml, credentials.yml.enc, identity/soul.md)
@@ -139,6 +144,32 @@ def generate_env_on_host(host: str, agent_id: str, deploy: dict):
     ssh(host, cmd)
 
 
+def upload_master_key_to_vm(host: str, agent_id: str, deploy: dict):
+    master_key_file = REPO_ROOT / "master.key"
+    if not master_key_file.exists():
+        die(
+            f"--vm mode requires master.key in the repo root ({master_key_file}). "
+            f"Paste the one-time HelixKit master key there, then rerun."
+        )
+
+    master_key = master_key_file.read_text().strip()
+    if not master_key:
+        die(f"{master_key_file} is empty")
+
+    master_key_path = deploy.get("master_key_path", f"/etc/helix-kit-agents/{agent_id}/master.key")
+    secret_dir = str(Path(master_key_path).parent)
+    info(f"uploading master.key to {host}:{master_key_path}")
+    ssh(host, f"sudo install -d -o $USER -g $USER -m 0700 {secret_dir}")
+
+    proc = subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", host, f"cat > {master_key_path} && chmod 600 {master_key_path}"],
+        input=master_key + "\n",
+        text=True,
+        check=True,
+    )
+    return proc
+
+
 def docker_compose_up(host: str | None, agent_id: str, deploy: dict | None = None):
     info("docker compose up -d")
     if host:
@@ -240,17 +271,20 @@ def parse_env(content: str) -> dict:
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("--host", help="SSH hostname for remote deploy")
+    parser.add_argument("--vm", nargs="?", const=True, help="deploy to the standard agent VM (default: deploy.yml vm_host or helix-agents)")
     parser.add_argument("--local", action="store_true", help="run against local Docker daemon")
     args = parser.parse_args()
 
-    if not args.host and not args.local:
-        die("specify either --host HOSTNAME or --local")
-    if args.host and args.local:
-        die("specify either --host or --local, not both")
+    modes = [bool(args.host), bool(args.vm), bool(args.local)]
+    if modes.count(True) != 1:
+        die("specify exactly one of --vm [HOSTNAME], --host HOSTNAME, or --local")
 
     deploy = validate_repo()
     agent_id = deploy["agent_id"]
     endpoint_url = deploy["endpoint_url"]
+
+    vm_mode = bool(args.vm)
+    host = args.host or (deploy.get("vm_host", "helix-agents") if args.vm is True else args.vm)
 
     if args.local:
         # In local mode, bin/generate-env runs locally and reads master.key from repo root
@@ -262,22 +296,24 @@ def main():
             )
         run(["python3", str(REPO_ROOT / "bin" / "generate-env")], cwd=REPO_ROOT)
     else:
-        # --host mode
+        # --host/--vm mode
         if shutil.which("rsync") is None:
             die("rsync not found; install it locally")
-        info(f"verifying SSH to {args.host}")
-        ssh(args.host, "echo ok", capture=True)
-        rsync_to_host(args.host, agent_id, deploy)
-        generate_env_on_host(args.host, agent_id, deploy)
+        info(f"verifying SSH to {host}")
+        ssh(host, "echo ok", capture=True)
+        if vm_mode:
+            upload_master_key_to_vm(host, agent_id, deploy)
+        rsync_to_host(host, agent_id, deploy)
+        generate_env_on_host(host, agent_id, deploy)
 
-    docker_compose_up(args.host, agent_id, deploy)
+    docker_compose_up(host, agent_id, deploy)
 
     if os.environ.get("HELIX_KIT_AGENTS_SKIP_HEALTH"):
         info("skipping health poll (HELIX_KIT_AGENTS_SKIP_HEALTH set)")
     elif not wait_for_health(endpoint_url):
         die(f"agent did not become healthy at {endpoint_url}/health within timeout")
 
-    env = read_credentials_for_announce(args.host, agent_id, deploy)
+    env = read_credentials_for_announce(host, agent_id, deploy)
 
     if os.environ.get("HELIX_KIT_AGENTS_SKIP_ANNOUNCE"):
         info("skipping announce step (HELIX_KIT_AGENTS_SKIP_ANNOUNCE set; bin/update without --reannounce)")

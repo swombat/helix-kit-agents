@@ -15,22 +15,17 @@ The encrypted credentials also contain the agent repo's GitHub deploy key. `bin/
 
 You commit the encrypted blob. You safeguard the master key.
 
-## 2. The LLM provider key (agent ↔ Anthropic/OpenAI/etc.)
+## 2. The LLM provider keys (agent ↔ Anthropic/OpenAI/etc.)
 
-This is YOUR key, from your provider account. The bill comes to you. It never enters the repo.
+Normally HelixKit copies its configured RubyLLM provider keys into the encrypted
+`credentials.yml.enc` blob during promotion/regeneration. They are not committed
+in plaintext; they are only recoverable with the one-time master key.
 
-Set it as a file on the deploy host:
+`bin/generate-env` decrypts them into the runtime `.env` on deploy. You should
+not need to paste Anthropic/OpenAI/etc. keys separately for each agent.
 
-```bash
-# On the deploy host, as the user that will run docker compose:
-sudo install -d -m 700 -o $USER /etc/helix-kit-agents/wing
-install -m 600 /dev/null /etc/helix-kit-agents/wing/.host-env
-cat > /etc/helix-kit-agents/wing/.host-env <<EOF
-ANTHROPIC_API_KEY=sk-ant-api03-...
-EOF
-```
-
-`bin/generate-env` reads this file (via `set -a; . .host-env; set +a`) and merges its contents into the `.env` it produces for docker compose.
+Advanced/manual deployments can still override provider keys with host
+environment variables or `.host-env`, but that is no longer the standard path.
 
 ## The master key
 
@@ -77,6 +72,9 @@ github:
   deploy_key: |
     -----BEGIN OPENSSH PRIVATE KEY-----
     ...
+llm_provider_keys:
+  ANTHROPIC_API_KEY: sk-ant-...
+  OPENROUTER_API_KEY: sk-or-...
 ```
 
 Decryption (Python, what `bin/generate-env` does):

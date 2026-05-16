@@ -6,7 +6,8 @@ Runs on the deploy host (or locally during testing). Reads:
   - master.key (one-line base64 of 32 random bytes)
   - credentials.yml.enc (AES-256-GCM-encrypted credentials YAML)
   - deploy.yml (image tag, identity path, memory limits, optional provider/model)
-  - host environment variables (LLM provider keys: ANTHROPIC_API_KEY etc.)
+  - encrypted LLM provider keys from credentials.yml.enc
+  - host environment variables (optional overrides: ANTHROPIC_API_KEY etc.)
 
 Writes:
   - .env (plaintext, mode 0600, gitignored)
@@ -32,6 +33,8 @@ The plaintext is YAML with this shape:
       deploy_key: |
         -----BEGIN OPENSSH PRIVATE KEY-----
         ...
+    llm_provider_keys:
+      ANTHROPIC_API_KEY: sk-ant-...
 
 Usage:
     bin/generate-env [--master-key-file PATH] [--credentials PATH] [--out .env]
@@ -179,12 +182,21 @@ def compose_env(creds: dict, deploy: dict, out_path: Path) -> str:
         f"MEM_LIMIT={deploy.get('mem_limit', '8g')}",
     ]
 
-    # Pass through LLM provider keys from host env. We don't validate them; the
-    # container will fail loudly if AGENT_PROVIDER is set to a provider whose
-    # key wasn't supplied.
-    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROK_API_KEY", "GOOGLE_API_KEY"):
-        if key in os.environ:
-            lines.append(f"{key}={os.environ[key]}")
+    # LLM provider keys are usually encrypted into credentials.yml.enc by
+    # HelixKit. Host env remains an override escape hatch for manual deploys.
+    llm_provider_keys = creds.get("llm_provider_keys") or {}
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "XAI_API_KEY",
+        "GROK_API_KEY",
+    ):
+        value = os.environ.get(key) or llm_provider_keys.get(key)
+        if value:
+            lines.append(f"{key}={value}")
 
     return "\n".join(lines) + "\n"
 
